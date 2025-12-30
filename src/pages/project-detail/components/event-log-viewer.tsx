@@ -509,6 +509,34 @@ export function EventLogViewer({
     return events.find((e) => e.launchedAgentId === selectedSubagentId) ?? null;
   }, [events, selectedSubagentId]);
 
+  // Calculate sub-agent duration from first to last event
+  const subagentDuration = useMemo(() => {
+    if (subagentEvents.length === 0) return null;
+
+    // Find first and last timestamps
+    const timestamps = subagentEvents
+      .map(e => e.timestamp)
+      .filter((t): t is string => t !== null)
+      .map(t => new Date(t).getTime())
+      .filter(t => !isNaN(t));
+
+    if (timestamps.length < 2) return null;
+
+    const first = Math.min(...timestamps);
+    const last = Math.max(...timestamps);
+    const durationMs = last - first;
+
+    if (durationMs < 1000) return "<1s";
+
+    const seconds = Math.floor(durationMs / 1000) % 60;
+    const minutes = Math.floor(durationMs / 60000) % 60;
+    const hours = Math.floor(durationMs / 3600000);
+
+    if (hours > 0) return `${hours}h ${minutes}m`;
+    if (minutes > 0) return `${minutes}m ${seconds}s`;
+    return `${seconds}s`;
+  }, [subagentEvents]);
+
   const SubagentPanel = (
     <div className={cn(
       "h-full flex flex-col border-l border-border",
@@ -538,6 +566,11 @@ export function EventLogViewer({
               {subagentEvents.length.toLocaleString()}
               {subagentTotalCount > subagentEvents.length && ` / ${subagentTotalCount.toLocaleString()}`} events
             </span>
+            {subagentDuration && (
+              <span className="text-xs text-muted-foreground/70 whitespace-nowrap">
+                {subagentDuration}
+              </span>
+            )}
             {subagentLoadingMore && (
               <IconLoader2 className="size-3 animate-spin text-muted-foreground" />
             )}
