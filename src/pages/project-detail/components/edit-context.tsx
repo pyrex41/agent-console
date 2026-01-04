@@ -80,13 +80,16 @@ export function EditContextView({
       return;
     }
 
+    // Capture byteOffset before async to satisfy TypeScript null checks
+    const { byteOffset } = selectedEvent;
+
     async function loadRawJson() {
       setRawJsonLoading(true);
       try {
         const json = await invoke<string | null>("get_event_raw_json", {
           projectPath,
           sessionId,
-          byteOffset: selectedEvent.byteOffset,
+          byteOffset,
         });
         setRawJson(json);
       } catch (err) {

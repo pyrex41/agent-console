@@ -58,17 +58,33 @@ pub fn get_active_sessions() -> ActiveSessionsResult {
 }
 
 /// Detect Claude sessions on macOS.
+/// Uses a single batched lsof call for all PIDs (much faster than individual calls).
 #[cfg(target_os = "macos")]
 fn detect_macos_sessions() -> HashSet<String> {
-    let mut paths = HashSet::new();
-
-    for pid in get_claude_pids() {
-        if let Some(cwd) = get_process_cwd_macos(pid) {
-            paths.insert(cwd);
-        }
+    let pids = get_claude_pids();
+    if pids.is_empty() {
+        return HashSet::new();
     }
 
-    paths
+    // Batch all PIDs into a single lsof call: "pid1,pid2,pid3,..."
+    let pid_list: String = pids.iter().map(|p| p.to_string()).collect::<Vec<_>>().join(",");
+
+    let output = Command::new("lsof")
+        .args(["-a", "-d", "cwd", "-Fn", "-p", &pid_list])
+        .output()
+        .ok();
+
+    let Some(output) = output else {
+        return HashSet::new();
+    };
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // -Fn format outputs: p<pid>, fcwd, n<path> for each process
+    stdout
+        .lines()
+        .filter_map(|line| line.strip_prefix('n').map(String::from))
+        .collect()
 }
 
 /// Detect Claude sessions on Linux.
@@ -111,30 +127,6 @@ fn get_claude_pids() -> Vec<u32> {
             }
         })
         .collect()
-}
-
-/// Get the current working directory of a process by PID on macOS.
-#[cfg(target_os = "macos")]
-fn get_process_cwd_macos(pid: u32) -> Option<String> {
-    let output = Command::new("lsof")
-        .args(["-p", &pid.to_string()])
-        .output()
-        .ok()?;
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-
-    for line in stdout.lines() {
-        if line.contains("cwd") {
-            // lsof output format: COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME
-            // The NAME (last field) is what we want
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            if let Some(path) = parts.last() {
-                return Some(path.to_string());
-            }
-        }
-    }
-
-    None
 }
 
 /// Get the current working directory of a process by PID on Linux.
