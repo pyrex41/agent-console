@@ -64,12 +64,6 @@ pub struct Project {
     pub sessions: Vec<Session>,
 }
 
-/// Internal struct for extracting cwd from JSONL entries.
-#[derive(Deserialize)]
-struct JsonlEntry {
-    cwd: Option<String>,
-}
-
 /// Get the Claude Code projects directory path.
 fn get_claude_projects_dir() -> Option<PathBuf> {
     dirs::home_dir().map(|h| h.join(".claude").join("projects"))
@@ -78,22 +72,6 @@ fn get_claude_projects_dir() -> Option<PathBuf> {
 /// Check if a project directory name is a temp folder (should be skipped).
 fn is_temp_project(name: &str) -> bool {
     name.contains("private-var-folders")
-}
-
-/// Extract project path from session file content.
-fn extract_project_path_from_content(file_path: &Path) -> Option<String> {
-    let file = File::open(file_path).ok()?;
-    let reader = BufReader::new(file);
-
-    for line in reader.lines().take(100) {
-        let line = line.ok()?;
-        if let Ok(entry) = serde_json::from_str::<JsonlEntry>(&line) {
-            if entry.cwd.is_some() {
-                return entry.cwd;
-            }
-        }
-    }
-    None
 }
 
 /// Convert SystemTime to ISO 8601 string.
@@ -158,9 +136,13 @@ pub fn discover_projects() -> Vec<Project> {
 fn process_project_dir(dir_path: &Path) -> Option<Project> {
     let entries = fs::read_dir(dir_path).ok()?;
 
+    // Derive project path from folder name (e.g., "-Users-reuben-project" -> "/Users/reuben/project")
+    // This is more reliable than reading cwd from session files, which can vary within a project
+    let dir_name = dir_path.file_name()?.to_string_lossy().to_string();
+    let project_path = decode_project_path(&dir_name);
+
     let mut session_files: Vec<PathBuf> = Vec::new();
     let mut subagent_count = 0u32;
-    let mut project_path: Option<String> = None;
     let mut latest_mtime: Option<SystemTime> = None;
 
     for entry in entries.flatten() {
@@ -199,18 +181,10 @@ fn process_project_dir(dir_path: &Path) -> Option<Project> {
         session_files.push(path);
     }
 
-    // Try to extract project path from the first session file only
-    for path in &session_files {
-        if project_path.is_none() {
-            project_path = extract_project_path_from_content(path);
-            if project_path.is_some() {
-                break;
-            }
-        }
+    // Skip if no session files found
+    if session_files.is_empty() {
+        return None;
     }
-
-    // If we couldn't find the project path from content, skip this project
-    let project_path = project_path?;
 
     // Extract project name from path
     let project_name = Path::new(&project_path)
@@ -243,6 +217,12 @@ fn process_project_dir(dir_path: &Path) -> Option<Project> {
 /// e.g., "/Users/ramos/project" -> "-Users-ramos-project"
 fn encode_project_path(project_path: &str) -> String {
     project_path.replace('/', "-")
+}
+
+/// Convert an encoded directory name back to a project path.
+/// e.g., "-Users-ramos-project" -> "/Users/ramos/project"
+fn decode_project_path(encoded_name: &str) -> String {
+    encoded_name.replace('-', "/")
 }
 
 /// Get sessions for a specific project (lightweight - no file content parsing).
